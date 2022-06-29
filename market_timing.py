@@ -285,6 +285,7 @@ class MarketTiming:
             else:
                 result[col] = result[col].apply(lambda x: format(x, '.2%') if not pd.isna(x) else '')
         result.index.name = f'{pr_df.index[0]} ~ {pr_df.index[-1]}'
+        result.columns.name = "（做多做空）" if stgy_type=="pos" else "（只做多）"
         display(result)
         pr_df_test = pr_df.loc[self.test_start_date:self.test_end_date].copy()
         result = self.cal_period_perf_indicator(pr_df_test)
@@ -294,6 +295,7 @@ class MarketTiming:
             else:
                 result[col] = result[col].apply(lambda x: format(x, '.2%') if not pd.isna(x) else '')
         result.index.name = f'{pr_df_test.index[0]} ~ {pr_df_test.index[-1]}'
+        result.columns.name = "（做多做空）" if stgy_type=="pos" else "（只做多）"
         display(result)
         
         fig = plt.figure(figsize=(16, 12))
