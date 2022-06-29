@@ -18,16 +18,16 @@ class MarketTiming:
         test_start_date=dt.date(2019, 1, 2),
         test_end_date=dt.date(2022, 5, 31)
     ):
-        q = QdbApi()
+        self.qdb_api = QdbApi()
         self.bmk_id = bmk_id
         self.test_start_date = time_util.str2dtdate(test_start_date) if type(test_start_date) == str else test_start_date
         self.history_start_date = time_util.str2dtdate(history_start_date) if type(history_start_date) == str else history_start_date
         self.history_end_date = time_util.str2dtdate(history_end_date) if type(history_end_date) == str else history_end_date
-        self.history_end_date = q.prev_tdate(self.test_start_date) if history_end_date is None else history_end_date
+        self.history_end_date = self.qdb_api.prev_tdate(self.test_start_date) if history_end_date is None else history_end_date
         assert self.history_end_date < self.test_start_date
         self.test_end_date = time_util.str2dtdate(test_end_date) if type(test_end_date) == str else test_end_date
-        self.bmk_name = q.get_index_list(self.bmk_id).squeeze()['index_name']
-        self.bmk_daily = q.get_index_daily(self.bmk_id)
+        self.bmk_name = self.qdb_api.get_index_list(self.bmk_id).squeeze()['index_name']
+        self.bmk_daily = self.qdb_api.get_index_daily(self.bmk_id)
         self.bmk_daily.set_index("date", inplace=True)
 
         print('=================================')
@@ -91,6 +91,7 @@ class MarketTiming:
     def plot_dot_product_result(self, cut_off_points=[0, 0.5, 1], mode='cum'):
         # cum: 累积时间间隔; seg: 不重叠时间间隔
         assert mode in ['cum', 'seg']
+        base_point = cut_off_points[0]
         if mode == 'cum':
             ret_cols = ["ret(1)", "ret(5)", "ret(10)", "ret(21)", "ret(63)"] 
         else: 
@@ -98,11 +99,10 @@ class MarketTiming:
         df = self._dot_product_df
         fig, (ax_0, ax_1, ax_2, ax_3) = plt.subplots(nrows=4, ncols=1, figsize=(16, 20), dpi=200)
         for col in ret_cols:
-            ax_0.plot((df["fcst"] * df[col]).cumsum(), label=f"$fcst^T \cdot {col}$")
+            ax_0.plot(((df["fcst"]-base_point) * df[col]).cumsum(), label=f"$fcst^T \cdot {col}$")
         ax_0.grid()
         ax_0.legend()
 
-        base_point = cut_off_points[0]
         for threshold, ax_i in zip(cut_off_points, [ax_1, ax_2, ax_3]):
             threshold_prime = 2*base_point - threshold
             short_ret_mean = [df.loc[df['fcst']<threshold_prime, col].mean() for col in ret_cols]
@@ -184,13 +184,13 @@ class MarketTiming:
 
     def evaluate_stgy(self, etf_id='510300#1', fut_id='IF'):
         self.etf_id = etf_id
-        self.etf_name = q.get_etf_list(self.etf_id).squeeze()['name']
-        self.etf_daily = q.get_etf_daily(self.etf_id, '1990-01-01', '2023-01-01')
+        self.etf_name = self.qdb_api.get_etf_list(self.etf_id).squeeze()['name']
+        self.etf_daily = self.qdb_api.get_etf_daily(self.etf_id, '1990-01-01', '2023-01-01')
         self.etf_daily.set_index("date", inplace=True)
-        fut_prod_list = q.get_fut_prod_list()
+        fut_prod_list = self.qdb_api.get_fut_prod_list()
         self.fut_id = fut_id
         self.fut_name = fut_prod_list[fut_prod_list['abbr']==self.fut_id].squeeze()['full_name']
-        self.fut_daily = q.get_main_price(self.fut_id, fut_type='main')
+        self.fut_daily = self.qdb_api.get_main_price(self.fut_id, fut_type='main')
         self.fut_daily.set_index("date", inplace=True)
         print(f'使用{self.etf_name}（{self.etf_id}）和{self.fut_name}（{self.fut_id}）进行实盘模拟')
 
@@ -284,6 +284,18 @@ class MarketTiming:
                 result[col] = result[col].apply(lambda x: format(x, '.3') if not pd.isna(x) else '')
             else:
                 result[col] = result[col].apply(lambda x: format(x, '.2%') if not pd.isna(x) else '')
+        result.index.name = f'{pr_df.index[0]} ~ {pr_df.index[-1]}'
+        result.columns.name = "（做多做空）" if stgy_type=="pos" else "（只做多）"
+        display(result)
+        pr_df_test = pr_df.loc[self.test_start_date:self.test_end_date].copy()
+        result = self.cal_period_perf_indicator(pr_df_test)
+        for col in result:
+            if col in ['SR', 'Calmar']:
+                result[col] = result[col].apply(lambda x: format(x, '.3') if not pd.isna(x) else '')
+            else:
+                result[col] = result[col].apply(lambda x: format(x, '.2%') if not pd.isna(x) else '')
+        result.index.name = f'{pr_df_test.index[0]} ~ {pr_df_test.index[-1]}'
+        result.columns.name = "（做多做空）" if stgy_type=="pos" else "（只做多）"
         display(result)
         
         fig = plt.figure(figsize=(16, 12))
@@ -360,10 +372,10 @@ class MarketTiming:
         return res
 
     def search_etf(self):
-        etf_list = q.search_mfp(f'{self.bmk_name}ETF')
+        etf_list = self.qdb_api.search_mfp(f'{self.bmk_name}ETF')
         etf_list = etf_list[~etf_list.name.str.contains('联接')]
         etf_list = etf_list[(etf_list['maturity_date'] > dt.date.today()) | (etf_list['maturity_date'].isna())]
         etf_list = etf_list[etf_list['found_date'] < self.history_start_date]
         print(f'存续时间满足要求的ETF共{len(etf_list)}个')
-        mfp_nav_df = q.get_mfp_asset_alloc(etf_list.index.tolist(), start_date='2021-12-31', end_date='2021-12-31')
+        mfp_nav_df = self.qdb_api.get_mfp_asset_alloc(etf_list.index.tolist(), start_date='2021-12-31', end_date='2021-12-31')
         return pd.concat([etf_list[['name', 'found_date']], mfp_nav_df.set_index('mfp_id')[['mfp_nav']]], axis=1)
